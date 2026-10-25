@@ -1,0 +1,29 @@
+# Local variable files (real values live here)
+vars/*
+!vars/*.example
+
+# Inventories (real IPs)
+*.ini
+
+# Secrets and keys
+.vault_pass
+*.vault_pass
+.env
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+
+# Ansible runtime files
+*.retry
+.ansible/
+*.log
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Scripts
+*.sh

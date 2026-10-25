@@ -1,0 +1,87 @@
+---
+# Read-only security audit. Makes no changes to any host.
+# Usage: ansible-playbook -i terraform_inventory.ini Security-Audit.yml
+
+- name: Security audit of servers
+  hosts: all
+  become: true
+
+  tasks:
+    # ---------- Firewall ----------
+    - name: Get UFW rules
+      ansible.builtin.command: ufw status verbose
+      register: ufw
+      changed_when: false
+      failed_when: false
+
+    - name: Get nftables ruleset (what UFW uses underneath)
+      ansible.builtin.shell: nft list ruleset 2>/dev/null | grep -c 'chain' || true
+      register: nft_chains
+      changed_when: false
+      failed_when: false
+
+    # ---------- Users and groups ----------
+    - name: List root and normal login users
+      ansible.builtin.shell: |
+        getent passwd | awk -F: '($3==0 || ($3>=1000 && $3<65534)) && $7 !~ /(nologin|false)$/ {printf "%s uid=%s shell=%s home=%s\n",$1,$3,$7,$6}'
+      register: login_users
+      changed_when: false
+
+    - name: Show groups each user belongs to
+      ansible.builtin.shell: |
+        for u in $(getent passwd | awk -F: '($3==0 || ($3>=1000 && $3<65534)) {print $1}'); do
+          echo "$u: $(id -nG "$u")"
+        done
+      register: user_groups
+      changed_when: false
+
+    - name: Show members of privileged groups
+      ansible.builtin.shell: |
+        getent group sudo adm admin docker lxd | awk -F: '{printf "%s: %s\n",$1,$4}'
+      register: priv_groups
+      changed_when: false
+      failed_when: false
+
+    - name: Find accounts with an empty password
+      ansible.builtin.shell: awk -F':' '($2=="") {print $1}' /etc/shadow | grep . || echo none
+      register: empty_pw
+      changed_when: false
+
+    - name: Find NOPASSWD sudo rules
+      ansible.builtin.shell: grep -rhE 'NOPASSWD' /etc/sudoers /etc/sudoers.d 2>/dev/null | grep -v '^#' | grep . || echo none
+      register: nopasswd
+      changed_when: false
+
+    # ---------- SSH and network ----------
+    - name: Get effective SSH settings
+      ansible.builtin.shell: sshd -T 2>/dev/null | grep -E '^(port|permitrootlogin|passwordauthentication|pubkeyauthentication|permitemptypasswords) ' || echo "sshd not found"
+      register: ssh_cfg
+      changed_when: false
+
+    - name: Get listening ports
+      ansible.builtin.shell: ss -tulnp | tail -n +2 | awk '{print $1, $5, $7}'
+      register: listening
+      changed_when: false
+
+    # ---------- Report ----------
+    - name: Security audit report
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            ['===== ' ~ inventory_hostname ~ ' =====', '', '--- Firewall (UFW) ---']
+            + (ufw.stdout_lines if ufw.rc == 0 else ['UFW not installed or not available'])
+            + ['nftables chains: ' ~ (nft_chains.stdout | trim), '', '--- Login users (root + UID 1000+) ---']
+            + login_users.stdout_lines
+            + ['', '--- Groups per user ---']
+            + user_groups.stdout_lines
+            + ['', '--- Privileged groups (sudo, adm, admin, docker, lxd) ---']
+            + priv_groups.stdout_lines
+            + ['', '--- Accounts with empty password ---']
+            + empty_pw.stdout_lines
+            + ['', '--- NOPASSWD sudo rules ---']
+            + nopasswd.stdout_lines
+            + ['', '--- Effective SSH settings ---']
+            + ssh_cfg.stdout_lines
+            + ['', '--- Listening ports (proto address process) ---']
+            + listening.stdout_lines
+          }}

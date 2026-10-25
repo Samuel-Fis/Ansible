@@ -1,0 +1,88 @@
+---
+# Base configuration for Terraform-created Ubuntu VMs:
+# installs btop + fastfetch, configures UFW, shows fastfetch at SSH login.
+#
+# Dry run:  ansible-playbook vm-base-config.yml --check --diff
+# One VM:   ansible-playbook vm-base-config.yml --limit tf-vm-test1
+# All VMs:  ansible-playbook vm-base-config.yml
+
+- name: VM base configuration
+  hosts: terraform_vms
+  become: true
+
+  vars:
+    base_packages:
+      - btop
+      - fastfetch
+      - ufw
+    ufw_ssh_from: "any"   # e.g. "192.168.0.0/24" to only allow SSH from your LAN
+    ufw_extra_rules: []   # e.g. [{ port: "80", proto: "tcp" }]
+
+  tasks:
+    - name: Check this is Ubuntu
+      ansible.builtin.assert:
+        that: ansible_facts['distribution'] == 'Ubuntu'
+        fail_msg: "{{ inventory_hostname }} is not Ubuntu."
+
+    # ---------- Packages ----------
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: "{{ base_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # ---------- Firewall (SSH rule first, so enabling can't lock you out) ----------
+    - name: Allow SSH
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+        from_ip: "{{ ufw_ssh_from }}"
+        comment: SSH
+
+    - name: Allow any extra ports
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: "{{ item.proto | default('tcp') }}"
+        from_ip: "{{ item.from | default('any') }}"
+      loop: "{{ ufw_extra_rules }}"
+
+    - name: Default deny incoming
+      community.general.ufw:
+        default: deny
+        direction: incoming
+
+    - name: Default allow outgoing
+      community.general.ufw:
+        default: allow
+        direction: outgoing
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+        logging: "on"
+
+    # ---------- Login banner ----------
+    - name: Run fastfetch at login (update-motd.d)
+      ansible.builtin.copy:
+        dest: /etc/update-motd.d/99-fastfetch
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          command -v fastfetch >/dev/null 2>&1 || exit 0
+          fastfetch --pipe false
+
+    # ---------- Verify ----------
+    - name: Get UFW status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status
+      changed_when: false
+      check_mode: false
+
+    - name: Show UFW status
+      ansible.builtin.debug:
+        var: ufw_status.stdout_lines

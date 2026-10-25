@@ -1,0 +1,25 @@
+---
+# Read-only health report. Changes nothing.
+# Run:  ansible-playbook health.yml
+- name: Health check
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Find the root filesystem
+      ansible.builtin.set_fact:
+        root_fs: "{{ ansible_facts['mounts'] | selectattr('mount', 'equalto', '/') | first | default({}) }}"
+ 
+    - name: List failed systemd units
+      ansible.builtin.command: systemctl --failed --no-legend --plain
+      register: failed_units
+      changed_when: false
+      failed_when: false
+ 
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "uptime:  {{ (ansible_facts['uptime_seconds'] / 86400) | round(1) }} days"
+          - "memory:  {{ ansible_facts['memtotal_mb'] - ansible_facts['memfree_mb'] }} / {{ ansible_facts['memtotal_mb'] }} MB used (includes cache)"
+          - "disk /:  {{ ((root_fs.size_total - root_fs.size_available) / 1073741824) | round(1) if root_fs.size_total is defined else 'n/a' }} / {{ (root_fs.size_total / 1073741824) | round(1) if root_fs.size_total is defined else 'n/a' }} GB"
+          - "failed units: {{ failed_units.stdout_lines | length }}{{ ' -> ' ~ failed_units.stdout_lines | join('; ') if failed_units.stdout_lines | length > 0 else '' }}"
+ 

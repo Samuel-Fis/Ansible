@@ -1,0 +1,36 @@
+---
+# Creates interactive users on the Terraform VMs.
+# Real values live in vars/users.yml (gitignored).
+# Start with: cp vars/users.yml.example vars/users.yml
+#
+# Usage: ansible-playbook users.yml
+
+- name: VM user setup
+  hosts: terraform_vms
+  become: true
+  vars_files:
+    - vars/users.yml
+
+  tasks:
+    - name: Create users
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+        password: "{{ item.password | password_hash('sha512') }}"
+        update_password: on_create
+      loop: "{{ users }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Set SSH keys
+      ansible.posix.authorized_key:
+        user: "{{ item.name }}"
+        key: "{{ item.ssh_keys | join('\n') }}"
+        exclusive: true
+        state: present
+      loop: "{{ users }}"
+      loop_control:
+        label: "{{ item.name }}"
